@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Taiyaki — Gated planning state for long-horizon agents</title>
+  <meta name="description" content="Taiyaki externalizes an agent's plan into a durable, gated state machine with executable verification.">
+  <meta property="og:title" content="Taiyaki">
+  <meta property="og:description" content="Gated planning state for long-horizon agents.">
+  <meta property="og:image" content="./assets/og-card.png">
+  <link rel="icon" href="./assets/favicon.png">
+  <link rel="stylesheet" href="./site.css">
+</head>
+<body>
+  <svg class="fx-defs" width="0" height="0" aria-hidden="true">
+    <filter id="water-warp" x="-20%" y="-20%" width="140%" height="140%">
+      <feTurbulence id="water-noise" type="fractalNoise" baseFrequency="0.007 0.02" numOctaves="2" seed="8" result="noise"/>
+      <feDisplacementMap id="water-displacement" in="SourceGraphic" in2="noise" scale="11" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+  </svg>
+
+  <header class="site-header">
+    <a href="#top" class="mini-brand">Taiyaki</a>
+    <nav>
+      <a href="#idea">Idea</a>
+      <a href="#mechanism">Mechanism</a>
+      <a href="#invariants">Invariants</a>
+      <a href="https://github.com/FabioFlorey/taiyaki">GitHub ↗</a>
+    </nav>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <div class="fish-layer" aria-hidden="true">
+        <div class="swimmer swimmer-left"></div>
+        <div class="swimmer swimmer-right"></div>
+      </div>
+
+      <img class="full-logo" src="./assets/full-logo.png" alt="Taiyaki">
+      <h1>Gated planning state for long-horizon agents.</h1>
+      <p class="lede">
+        Plans persist outside the model. State transitions are enforced by the server.
+        Completion is recorded only after executable verification.
+      </p>
+      <div class="actions">
+        <a class="button primary" href="https://github.com/FabioFlorey/taiyaki">View on GitHub</a>
+        <a class="button quiet" href="#mechanism">How it works</a>
+      </div>
+    </section>
+
+    <section class="intro" id="idea">
+      <p class="eyebrow">The problem</p>
+      <h2>Reliability needs a gate, not another reminder.</h2>
+      <p class="body-copy">
+        Long-running agents lose plans, silently omit subtasks, and declare success too early.
+        Taiyaki treats the agent as an untrusted client of its own plan: the plan lives outside
+        the context window, and state transitions live outside the agent's discretion.
+      </p>
+    </section>
+
+    <section class="flow" id="mechanism">
+      <p class="eyebrow">How it works</p>
+      <h2>Five phases. Narrow tools. Executable receipts.</h2>
+
+      <div class="phase-line">
+        <div><span>01</span><strong>planning</strong><small>read + plan mutation</small></div>
+        <div><span>02</span><strong>implementing</strong><small>edit + plan read</small></div>
+        <div><span>03</span><strong>verifying</strong><small>server-run checks</small></div>
+        <div><span>04</span><strong>done</strong><small>read only</small></div>
+        <div><span>05</span><strong>blocked</strong><small>explicitly unresolved</small></div>
+      </div>
+
+      <div class="principles">
+        <article>
+          <h3>Phase-scoped tools</h3>
+          <p>Each phase exposes only the tools permitted in that state. Invalid calls are rejected at the server boundary.</p>
+        </article>
+        <article>
+          <h3>Executable gates</h3>
+          <p>Verification runs server-side. PASS receipts are tied to the current tree hash, so completion cannot be fabricated.</p>
+        </article>
+        <article>
+          <h3>Provenance</h3>
+          <p>Transitions carry actor, timestamp, and receipt references. “Done” becomes an environmental fact, not a model opinion.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="statement" id="invariants">
+      <div class="statement-fish" aria-hidden="true">
+        <img src="./assets/taiyaki.png" alt="">
+      </div>
+      <p class="eyebrow">Core invariants</p>
+      <h2>Trust the receipt.<br>Not the claim.</h2>
+      <ol>
+        <li><span>I1</span> A tool call is accepted only when allowed in the current phase.</li>
+        <li><span>I2</span> A task is done only when a PASS receipt exists for the current tree hash.</li>
+        <li><span>I3</span> Verification is executed by the server, not written by the agent.</li>
+        <li><span>I4</span> Every transition is logged with provenance.</li>
+      </ol>
+    </section>
+
+    <section class="closing">
+      <h2>Durability is useful.<br>Gating is the point.</h2>
+      <p>
+        The agent cannot advance without producing proof, and the proof is produced by execution
+        the agent does not control.
+      </p>
+      <a href="https://github.com/FabioFlorey/taiyaki">github.com/FabioFlorey/taiyaki ↗</a>
+    </section>
+  </main>
+
+  <footer>
+    <span>Taiyaki</span>
+    <span>Gated planning state for long-horizon agents.</span>
+  </footer>
+  <script src="./site.js"></script>
+</body>
+</html>
