@@ -9,24 +9,25 @@
 
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
+  // Reverse both swimmers by 180 degrees, including their facing direction.
   const fish = [
     {
       el: leftFish,
-      direction: -1,
+      direction: 1,
       phase: 0.18,
       baseDuration: 13.8,
       bobPhase: 0.4,
       speedPhase: 0.2,
-      flip: 1
+      flip: -1
     },
     {
       el: rightFish,
-      direction: 1,
+      direction: -1,
       phase: 0.67,
       baseDuration: 15.2,
       bobPhase: 2.1,
       speedPhase: 2.7,
-      flip: -1
+      flip: 1
     }
   ];
 
@@ -96,8 +97,8 @@
     const layerRect = layer.getBoundingClientRect();
     const leftW = leftFish.getBoundingClientRect().width;
     const rightW = rightFish.getBoundingClientRect().width;
-    leftFish.style.transform = `translate3d(${layerRect.width * 0.62}px, 0, 0)`;
-    rightFish.style.transform = `translate3d(${layerRect.width * 0.1 - rightW}px, 0, 0) scaleX(-1)`;
+    leftFish.style.transform = `translate3d(${layerRect.width * 0.62}px, 0, 0) scaleX(${fish[0].flip})`;
+    rightFish.style.transform = `translate3d(${layerRect.width * 0.1 - rightW}px, 0, 0) scaleX(${fish[1].flip})`;
     noise.setAttribute("baseFrequency", "0.007 0.02");
     displacement.setAttribute("scale", "9");
     layer.style.transform = "none";
