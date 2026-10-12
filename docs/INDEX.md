@@ -37,6 +37,10 @@ PASS receipts. A local untracked Rust scaffold is not a published release.
 
 ## Getting started and development
 
+- [Testing strategy and evidence](./development/TESTING.md): Jelly-inspired
+  test governance, isolated Rust/process verification, I1–I4 acceptance
+  contracts and future CI sequencing.
+
 No runnable Taiyaki installation or MCP quickstart is available yet.
 The repository's existing CI job is a placeholder rather than an
 end-to-end implementation check. Executable guides and development

@@ -242,6 +242,11 @@ Additional adversarial tests: race between edit and verify, symlink/traversal
 rejection, gate policy mutation after finalization, stale plan revision,
 nonzero exit, verifier timeout, interrupted state write and reopened task.
 
+For actual boundaries (unit/component/system/remote), proposed scenario IDs,
+isolated runners, evidence capture, anti-duplication rules and CI sequencing,
+see [Testing strategy and evidence](../development/TESTING.md). Its tests
+are **planned**, not implemented or executed.
+
 ## Scope / implementation sequencing
 
 1. **Core Rust:** define typed lifecycle, pure transition policy and failing
@@ -254,4 +259,5 @@ nonzero exit, verifier timeout, interrupted state write and reopened task.
 
 This RFC adds **no executable behavior**, does not approve the gate runner's
 OS privileges and does not authorize deployment, new dependencies, or a release.
+
 <div align="right"><sub><a href="#top">&uarr; Back to top</a></sub></div>
