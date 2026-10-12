@@ -1,19 +1,19 @@
-//! Local-only stdio MCP adapter; stdout is reserved for MCP messages.
+//! Unprivileged MCP adapter; the local authority owns all persistent state.
 use rmcp::{transport::stdio, ServiceExt};
-use std::{env, io};
+use std::{env, io, path::PathBuf};
 
+fn required(name: &str) -> io::Result<PathBuf> {
+    env::var_os(name)
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, format!("missing {name}")))
+}
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let path = env::var_os("TAIYAKI_PLAN_FILE")
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "set TAIYAKI_PLAN_FILE to a filename in a private (0700) directory",
-            )
-        })?;
-    let store = taiyaki::store::PlanStore::open(path)?;
-    let service = taiyaki::mcp::TaiyakiMcp::new(store).serve(stdio()).await?;
+    let socket = required("TAIYAKI_SOCKET_PATH")?;
+    let key = required("TAIYAKI_SECRET_FILE")?;
+    let client = taiyaki::authority::Client::open(socket, &key)?;
+    let service = taiyaki::mcp::TaiyakiMcp::new(client).serve(stdio()).await?;
     service.waiting().await?;
     Ok(())
 }

@@ -1,51 +1,56 @@
 # Taiyaki architecture
 
-Taiyaki currently provides a Rust planning model, a **local stdio MCP adapter**,
-and a separate static website. A separately authenticated authority server
-and verification worker are not yet implemented.
+Taiyaki currently implements a Rust planning model, a local stdio MCP
+adapter, and a separate SQLite authority process accessed over a Unix socket.
+The static concept website is independent of these components.
 
-## Implemented components
+## Implemented authority path
 
-The [planning model](../reference/PLANNING.md) defines versioned plans,
-work items, metadata, dependency graphs, acceptance criteria, and
-revision-checked edits.
-
-The [local MCP adapter](../reference/MCP.md) exposes four typed tools:
-`plan_get`, `plan_create`, `plan_edit`, and `plan_review`.
-It uses the official RMCP SDK to handle protocol negotiation and schemas.
-
-```text
-Local MCP client
-      |
-      | stdio
-      v
-taiyaki-mcp (client's OS identity)
-      |
-      | declarative plan operations
-      v
-Rust planning model
-      |
-      | revision checks and filesystem lock
-      v
-Private JSON plan file (atomic replacement)
+```mermaid
+flowchart TD
+    A["MCP client"] --> B["taiyaki-mcp (client UID)"]
+    B --> C["Unix socket: UID + HMAC challenge"]
+    C --> D["taiyaki-authority (separate UID)"]
+    D --> E["Plan validation and revision check"]
+    E --> F[("Private SQLite")]
 ```
 
-No tool accepts arbitrary filesystem paths or executes shell commands.
+[Planning model](../reference/PLANNING.md): versioned plans, work items,
+dependencies, review submission, and optimistic revision checks.
 
-## Trust boundaries
+[MCP and authority reference](../reference/MCP.md): four typed MCP tools,
+local Unix-socket transport, Linux peer-credential check, per-connection
+HMAC-SHA256 challenge-response, and transactional SQLite persistence.
 
-The current adapter runs under its client's OS identity. Another process
-with that identity may modify the plan file directly. Plan submission is
-**not authenticated approval**. Metadata and timestamps are declarative;
-verification gate identifiers are not trusted PASS receipts.
+The MCP adapter does not open SQLite; it forwards supported declarative
+operations to the authority. SQLite data is stored in an authority-owned
+private directory. An authenticated caller cannot choose arbitrary tools,
+SQL commands, or filesystem paths through the MCP interface.
 
-An independent authority, server-enforced phase gates, an isolated verifier,
-receipt freshness checks, and mandatory durable transition auditing remain
-unimplemented.
+## Security boundaries
 
-## Verification
+The authority and adapter **must** run under different Unix UIDs. The
+authority authenticates the connecting process's UID and verifies a fresh
+cryptographic challenge on every connection. The client identity is still
+the Unix UID, not a uniquely attested executable: processes sharing that
+UID can potentially access its key. A separate OS identity is necessary
+for isolating unrelated MCP processes.
 
-`cargo test --locked --all-targets` covers the planning model, private
-file store and actual MCP stdio exchanges. `bash scripts/check-site.sh`
-validates the static website. These tests do not establish the intended
-independent security invariants.
+A plan marked `submitted` is ready for review, **not approved**.
+Planning timestamps and owner labels are declarative, not authenticated
+audit provenance. Gate IDs are references, not executable verification or
+PASS receipts.
+
+**Not implemented:** execution-phase enforcement (I1), source-bound
+verification receipts (I2/I3), an isolated verification worker, durable
+mandatory audit history (I4), multi-plan authority tenancy, or remote MCP
+transport.
+
+## Verification scope
+
+The Rust tests exercise the planning model, SQLite transactions, and a real
+stdio MCP-to-authority exchange. A Linux integration fixture starts an
+authority under a distinct Unix UID and checks peer denial, invalid and
+replayed HMAC proof, private database access, and plan persistence.
+
+`bash scripts/check-site.sh` independently checks the website.
