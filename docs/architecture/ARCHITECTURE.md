@@ -1,38 +1,51 @@
 # Taiyaki architecture
 
-Taiyaki currently provides a Rust **planning data model** and a separate static
-concept website. A runnable authority server, MCP endpoint and verification
-worker are not part of the repository.
+Taiyaki currently provides a Rust planning model, a **local stdio MCP adapter**,
+and a separate static website. A separately authenticated authority server
+and verification worker are not yet implemented.
 
-## Implemented Rust model
+## Implemented components
 
-The `taiyaki` crate exposes a planning module in [`src/planning.rs`](../../src/planning.rs)
-and basic project, task, subtask and test structures in
-[`src/lib.rs`](../../src/lib.rs).
+The [planning model](../reference/PLANNING.md) defines versioned plans,
+work items, metadata, dependency graphs, acceptance criteria, and
+revision-checked edits.
 
-The planning module has versioned plans, work items, descriptive metadata,
-dependencies, priorities, schedules, acceptance criteria and verification-gate
-references. It checks graph validity, supports atomic revision-checked edits,
-and serializes plans to JSON. A plan can be marked **submitted for review**;
-this does not constitute approval or verified completion.
+The [local MCP adapter](../reference/MCP.md) exposes four typed tools:
+`plan_get`, `plan_create`, `plan_edit`, and `plan_review`.
+It uses the official RMCP SDK to handle protocol negotiation and schemas.
 
-See the [planning model reference](../reference/PLANNING.md) for its supported
-schema and edit API.
+```text
+Local MCP client
+      |
+      | stdio
+      v
+taiyaki-mcp (client's OS identity)
+      |
+      | declarative plan operations
+      v
+Rust planning model
+      |
+      | revision checks and filesystem lock
+      v
+Private JSON plan file (atomic replacement)
+```
+
+No tool accepts arbitrary filesystem paths or executes shell commands.
 
 ## Trust boundaries
 
-Planning metadata is client-provided data, not authenticated identity or audit
-evidence. A gate reference is not a PASS receipt. Model-level review locking
-does not prevent an untrusted client from modifying stored JSON directly.
+The current adapter runs under its client's OS identity. Another process
+with that identity may modify the plan file directly. Plan submission is
+**not authenticated approval**. Metadata and timestamps are declarative;
+verification gate identifiers are not trusted PASS receipts.
 
-The following are **not implemented**: server-enforced tool access, trusted
-execution receipts tied to source digests, isolated gate execution, durable
-transition audit, and MCP or CLI authority adapters.
+An independent authority, server-enforced phase gates, an isolated verifier,
+receipt freshness checks, and mandatory durable transition auditing remain
+unimplemented.
 
-## Checks
+## Verification
 
-`cargo test --locked --all-targets` exercises Rust model validation and
-serialization. `bash scripts/check-site.sh` validates website assets and fish
-animation logic. GitHub Actions CI runs both sets of checks.
-
-These checks do not establish Taiyaki's intended security invariants.
+`cargo test --locked --all-targets` covers the planning model, private
+file store and actual MCP stdio exchanges. `bash scripts/check-site.sh`
+validates the static website. These tests do not establish the intended
+independent security invariants.
