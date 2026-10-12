@@ -9,8 +9,6 @@ const vm = require("node:vm");
 
 const root = path.resolve(__dirname, "../..");
 const source = fs.readFileSync(path.join(root, "site/assets/js/main.js"), "utf8");
-const legacy = fs.readFileSync(path.join(root, "docs/site.js"), "utf8");
-assert.equal(source, legacy, "site/ and legacy docs/ must use the same animation");
 
 function simulation(reducedMotion, width = 1400, height = 800) {
   const frames = [];

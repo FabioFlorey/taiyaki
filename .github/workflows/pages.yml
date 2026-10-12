@@ -1,6 +1,9 @@
-name: Pages (manual publishing)
+name: Pages
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -28,6 +31,6 @@ jobs:
         uses: actions/upload-pages-artifact@v4
         with:
           path: site
-      - name: Publish on explicit operator request
+      - name: Publish site/ artifact
         id: deployment
         uses: actions/deploy-pages@v4

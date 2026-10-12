@@ -1,10 +1,18 @@
 #!/usr/bin/env bash
-# Validate the static artifact before a manual Pages publish.
+# Validate the one-and-only static website source used by GitHub Pages.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SITE="$ROOT/site"
 checked=0
+
+# Guard against accidentally reviving the retired GitHub Pages copy in docs/.
+for legacy in docs/index.html docs/site.css docs/site.js docs/assets docs/fonts; do
+  if [[ -e "$ROOT/$legacy" ]]; then
+    printf 'Duplicate website found outside site/: %s\n' "$legacy" >&2
+    exit 1
+  fi
+done
 
 for required in index.html 404.html .nojekyll robots.txt sitemap.xml assets/css/style.css assets/js/main.js; do
   [[ -f "$SITE/$required" ]] || { printf 'Missing site file: %s\n' "$required" >&2; exit 1; }
