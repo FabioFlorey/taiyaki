@@ -176,6 +176,7 @@ h3 {
 
 .swimmer {
   position: absolute;
+  top: 0;
   left: 0;
   width: clamp(340px, 42vw, 620px);
   aspect-ratio: 1407 / 980;
@@ -185,14 +186,6 @@ h3 {
   mix-blend-mode: multiply;
   transform-origin: 52% 50%;
   will-change: transform;
-}
-
-.swimmer-left {
-  top: 9%;
-}
-
-.swimmer-right {
-  bottom: 3%;
 }
 
 .intro,

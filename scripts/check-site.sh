@@ -60,6 +60,7 @@ fi
 
 if command -v node >/dev/null 2>&1; then
   while IFS= read -r -d '' file; do node --check "$file"; done < <(find "$SITE" -type f -name '*.js' -print0)
+  node "$ROOT/scripts/tests/fish-motion.cjs"
 fi
 
 printf 'Site check PASS: %s local references resolved. No deploy performed.\n' "$checked"
