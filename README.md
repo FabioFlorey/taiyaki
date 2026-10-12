@@ -10,51 +10,34 @@
 
 **Gated planning state for long-horizon agents.**
 
-🐡 [**Architecture**](./docs/architecture/ARCHITECTURE.md)　•　🐡 [**Deployment**](./docs/reference/DEPLOYMENT.md)　•　🐡 [**Documentation**](./docs/INDEX.md)
-
-🐡 [Visit the project website](https://fabioflorey.github.io/taiyaki/)
-
-[![Stars](https://img.shields.io/github/stars/FabioFlorey/taiyaki?style=flat&label=stars)](https://github.com/FabioFlorey/taiyaki/stargazers) [![Forks](https://img.shields.io/github/forks/FabioFlorey/taiyaki?style=flat&label=forks)](https://github.com/FabioFlorey/taiyaki/forks)
+[Website](https://fabioflorey.github.io/taiyaki/) ·
+[Documentation](./docs/INDEX.md) ·
+[Repository structure](./docs/architecture/ARCHITECTURE.md)
 
 </div>
 
-## Table of Contents
+## Project status
 
-- [1. Project status](#1-project-status)
-- [2. Design principles](#2-design-principles)
-- [3. Documentation](#3-documentation)
+Taiyaki is an early-stage project. Its current tracked source does not ship
+a runnable Rust server, MCP implementation, or verification engine.
 
-## 1. Project status
+The website illustrates the product concept rather than presenting a working
+quickstart. The repository currently contains the static site, its assets,
+documentation, and workflow configuration.
 
-**Design-stage project — not a released, runnable MCP/server implementation.**
-The public website explains Taiyaki's intended architecture, not functionality
-already present in the tracked Rust code. Current CI is a placeholder. A local
-untracked Rust scaffold provides basic data models only; it is not a published
-release or executable implementation of the invariants.
+## Website source
 
-## 2. Design principles
+The static website is prepared under `site/` with separate directories for
+CSS, JavaScript, images, and fonts. The existing website files under `docs/`
+remain temporarily for compatibility with the previous GitHub Pages layout.
+The publication source has **not** been switched automatically.
 
-Taiyaki aims to make agent completion independently verifiable:
+Validate the new static site locally:
 
-- **I1:** Reject a tool call outside its operational phase at the authority boundary.
-- **I2:** Mark work `done` only with server-issued PASS receipts for the *current* source tree and plan revision.
-- **I3:** Run approved verification gates outside the agent's control, through a restricted worker.
-- **I4:** Persist transition provenance including authenticated actor, timestamp and receipt references.
+```sh
+bash scripts/check-site.sh
+```
 
-Deployment and transport are **independent**: an MCP or CLI client could use
-a local Unix socket, an SSH-forwarded socket to another host, or a configured
-connection to Taiyaki running in a container. These are proposals, **not
-available adapters today**.
-
-## 3. Documentation
-
-- [Documentation index](./docs/INDEX.md) — status and navigation.
-- [Architecture (MVP RFC)](./docs/architecture/ARCHITECTURE.md) — states,
-  receipt model, invariants and security boundaries.
-- [Deployment and connection adapters](./docs/reference/DEPLOYMENT.md) —
-  local/SSH/container topologies, trade-offs and planned verification tests.
-
-No installation, MCP endpoint or quickstart is advertised until executable
-integration tests establish that it works.
-
-<div align="right"><sub><a href="#top">&uarr; Back to top</a></sub></div>
+This validates static assets; it does not deploy the website or test a Rust
+server. See [repository architecture](./docs/architecture/ARCHITECTURE.md)
+for the actual source layout.

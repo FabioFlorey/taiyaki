@@ -1,12 +1,19 @@
-name: CI
+name: Site validation
 
 on:
   push:
+    branches:
+      - main
+      - vibe
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
-  placeholder:
-    runs-on: ubuntu-latest
+  site:
+    runs-on: ubuntu-24.04
     steps:
-      - name: Placeholder
-        run: echo "CI placeholder — checks will be added later."
+      - uses: actions/checkout@v4
+      - name: Validate prepared static site
+        run: bash scripts/check-site.sh
