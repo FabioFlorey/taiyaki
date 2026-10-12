@@ -1,68 +1,38 @@
-<div id="top"></div>
+# Taiyaki architecture
 
-# Repository architecture
+Taiyaki currently provides a Rust **planning data model** and a separate static
+concept website. A runnable authority server, MCP endpoint and verification
+worker are not part of the repository.
 
-## Contents
+## Implemented Rust model
 
-- [Current repository](#current-repository)
-- [Website separation](#website-separation)
-- [What can be verified](#what-can-be-verified)
+The `taiyaki` crate exposes a planning module in [`src/planning.rs`](../../src/planning.rs)
+and basic project, task, subtask and test structures in
+[`src/lib.rs`](../../src/lib.rs).
 
-[Documentation index](../INDEX.md)
+The planning module has versioned plans, work items, descriptive metadata,
+dependencies, priorities, schedules, acceptance criteria and verification-gate
+references. It checks graph validity, supports atomic revision-checked edits,
+and serializes plans to JSON. A plan can be marked **submitted for review**;
+this does not constitute approval or verified completion.
 
-**Audience:** Developers and maintainers inspecting the repository as it exists.
+See the [planning model reference](../reference/PLANNING.md) for its supported
+schema and edit API.
 
-## Current repository
+## Trust boundaries
 
-The tracked Taiyaki repository currently contains a static concept website,
-project images, Markdown documentation, and workflow configuration. No
-executable Taiyaki service or MCP implementation is tracked.
+Planning metadata is client-provided data, not authenticated identity or audit
+evidence. A gate reference is not a PASS receipt. Model-level review locking
+does not prevent an untrusted client from modifying stored JSON directly.
 
-The public website depicts intended principles; it does not demonstrate that
-phase-based tool access, server-enforced transitions, or receipt verification
-are available. Those behaviors must be implemented and tested before
-describing them as product capabilities.
+The following are **not implemented**: server-enforced tool access, trusted
+execution receipts tied to source digests, isolated gate execution, durable
+transition audit, and MCP or CLI authority adapters.
 
-## Website separation
+## Checks
 
-```text
-site/
-  index.html
-  404.html
-  assets/
-    css/style.css
-    js/main.js
-    fonts/
-    images/
-docs/
-  INDEX.md
-  architecture/ARCHITECTURE.md
-scripts/
-  check-site.sh
-```
+`cargo test --locked --all-targets` exercises Rust model validation and
+serialization. `bash scripts/check-site.sh` validates website assets and fish
+animation logic. GitHub Actions CI runs both sets of checks.
 
-`site/` is the prepared standalone static website source, following the
-site-versus-docs split used by Jelly. `docs/` is for Markdown documentation.
-Existing static files in `docs/` are retained temporarily because the
-currently configured GitHub Pages publishing source has not been independently
-verified; removing them could break the existing public URL.
-
-The proposed `.github/workflows/pages.yml` is explicitly manual-only.
-Its presence does not mean GitHub Pages has been reconfigured or deployed.
-
-## What can be verified
-
-Run from the repository root:
-
-```sh
-bash scripts/check-site.sh
-```
-
-This checks the prepared static site's local references and JavaScript syntax
-when Node.js is installed. It does not build a server, start processes, prove
-security boundaries, test the live website, or deploy GitHub Pages.
-
-The repository's `.github/workflows/ci.yml` runs only the static-site check;
-it does not exercise any Rust server or security invariants.
-
-<div align="right"><sub><a href="#top">&uarr; Back to top</a></sub></div>
+These checks do not establish Taiyaki's intended security invariants.
