@@ -10,13 +10,14 @@ from authority_e2e import Mcp,run
 authority_bin,mcp_bin,verifier_bin=sys.argv[1:4]
 verifier_user="daemon"
 verifier_uid=int(run("id","-u",verifier_user).stdout.strip())
+verifier_gid=int(run("id","-g",verifier_user).stdout.strip())
 assert verifier_uid not in (65534,os.getuid())
 def sha(raw):return hashlib.sha256(raw).hexdigest()
 def pinned(gate):return sha(json.dumps(gate,sort_keys=True,separators=(",",":"),ensure_ascii=False).encode())
 def witness_test(path,body):
     scratch=Path("/tmp")/("taiyaki-case-"+uuid.uuid4().hex)
     scratch.write_text(body)
-    run("sudo","-n","install","-o",verifier_user,"-g",str(verifier_uid),"-m","600",str(scratch),str(path))
+    run("sudo","-n","install","-o",str(verifier_uid),"-g",str(verifier_gid),"-m","600",str(scratch),str(path))
     scratch.unlink()
 def as_verifier(*args):
     return run("sudo","-n","-u",verifier_user,"env","HOME=/tmp","GIT_CONFIG_GLOBAL=/dev/null",*args)
@@ -43,7 +44,7 @@ def verify_catalog(root,catalog_path,definitions,markers):
         })
     temp=root.parent/("pending-catalog-"+uuid.uuid4().hex)
     temp.write_text(json.dumps({"source_root":str(root),"cases":cases}))
-    run("sudo","-n","install","-o",verifier_user,"-g",str(verifier_uid),"-m","600",str(temp),str(catalog_path))
+    run("sudo","-n","install","-o",str(verifier_uid),"-g",str(verifier_gid),"-m","600",str(temp),str(catalog_path))
     temp.unlink()
 def git_commit(root,message):
     as_verifier("git","-C",str(root),"add",".")
@@ -83,7 +84,8 @@ with tempfile.TemporaryDirectory(prefix="taiyaki-workflow-e2e-") as temp:
     for path,perm,owner in (("socket",0o711,"nobody"),("database",0o700,"nobody"),
                             ("approved",0o700,verifier_user),("verifier-private",0o700,verifier_user)):
         dest=root/path;dest.mkdir(mode=perm)
-        run("sudo","-n","chown",owner+":"+owner,str(dest))
+        owner_ids="65534:65534" if owner=="nobody" else f"{verifier_uid}:{verifier_gid}"
+        run("sudo","-n","chown",owner_ids,str(dest))
     approved=root/"approved"
     as_verifier("mkdir","-m","700",str(approved/"tests"))
     witness_test(approved/"implementation.txt","NOT_READY\n")
@@ -104,12 +106,12 @@ print("BETA_TEST_PASSED")
     verifier_master=root/"verifier-private"/"verifier.key"
     scratch=root/"temp-verifier-key"
     scratch.write_text(os.urandom(32).hex()+"\n")
-    run("sudo","-n","install","-o",verifier_user,"-g",str(verifier_uid),"-m","600",str(scratch),str(verifier_master))
+    run("sudo","-n","install","-o",str(verifier_uid),"-g",str(verifier_gid),"-m","600",str(scratch),str(verifier_master))
     scratch.unlink()
     authority_key=root/"database"/"authority.key"
     verifier_authority_key=root/"database"/"verifier.key"
-    run("sudo","-n","install","-o","nobody","-g","nobody","-m","600",str(master),str(authority_key))
-    run("sudo","-n","install","-o","nobody","-g","nobody","-m","600",str(verifier_master),str(verifier_authority_key))
+    run("sudo","-n","install","-o","65534","-g","65534","-m","600",str(master),str(authority_key))
+    run("sudo","-n","install","-o","65534","-g","65534","-m","600",str(verifier_master),str(verifier_authority_key))
     socket_path=root/"socket"/"authority.sock"
     data_path=root/"database"/"plans.sqlite"
     pid_path=root/"database"/"authority.pid"
