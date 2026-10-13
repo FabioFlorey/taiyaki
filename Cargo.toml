@@ -5,7 +5,6 @@ edition = "2021"
 
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
-fs2 = "0.4"
 hex = "0.4"
 hmac = "0.12"
 libc = "0.2"

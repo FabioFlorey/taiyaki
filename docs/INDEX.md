@@ -1,13 +1,14 @@
 # Taiyaki documentation
 
-- [Architecture](./architecture/ARCHITECTURE.md) — implemented
-  components and current security boundaries.
+- [Architecture](./architecture/ARCHITECTURE.md) — implemented planning,
+  WorkItem scheduling, Test Gate verification and trust boundaries.
 - [Planning model](./reference/PLANNING.md) — schema, metadata,
   revision-checked editing and review submission.
-- [Local MCP and authority](./reference/MCP.md) — actual stdio adapter,
-  Unix-socket authentication, SQLite and tool contracts.
+- [Local MCP, Authority and Verifier](./reference/MCP.md) — MCP tool
+  contracts, real test execution, operator-approved catalogs and security setup.
 - [Project website](https://fabioflorey.github.io/taiyaki/)
 - [Source code](https://github.com/FabioFlorey/taiyaki)
 
-Taiyaki provides a local planning authority, not an independent
-verification engine or trusted completion workflow.
+Taiyaki's current implementation targets controlled, local use with
+independently provisioned Unix identities. It is not a general-purpose
+sandbox for arbitrary unreviewed test code.

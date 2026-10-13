@@ -157,7 +157,7 @@ def main():
                 client.initialize()
                 discovery=client.call(2,"tools/list",{})["result"]["tools"]
                 assert sorted(tool["name"] for tool in discovery)==[
-                    "plan_create","plan_edit","plan_get","plan_review"
+                    "plan_create","plan_edit","plan_get","plan_review","test_define","work_next","work_report","work_status"
                 ]
                 assert client.tool(3,"plan_get")["structuredContent"]["code"]=="not_found"
                 made=client.tool(4,"plan_create",{"title":"Private Plan","description":"isolated"})
@@ -184,7 +184,7 @@ def main():
             finally:restarted.close()
             assert not (root/"plan.json").exists()
             assert run("sudo","-n","test","-f",str(db_path)).returncode == 0
-            print("PASS: separate UIDs, kernel peer denial, wrong HMAC, 4 MCP tools, SQLite persistence, revisions, review lock")
+            print("PASS: separate UIDs, kernel peer denial, wrong HMAC, 8 MCP tools, SQLite persistence, revisions, review lock")
         finally:
             try:
                 pid=run("sudo","-n","cat",str(pid_path)).stdout.strip()

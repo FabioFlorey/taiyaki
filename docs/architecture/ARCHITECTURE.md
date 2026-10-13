@@ -1,56 +1,81 @@
 # Taiyaki architecture
 
-Taiyaki currently implements a Rust planning model, a local stdio MCP
-adapter, and a separate SQLite authority process accessed over a Unix socket.
-The static concept website is independent of these components.
+Taiyaki currently implements a Rust planning model, a local stdio MCP adapter,
+an independently authenticated SQLite authority, and an optional separate
+Test Gate verifier. The static website remains a distinct component.
 
-## Implemented authority path
+## Work orchestration
 
-```mermaid
-flowchart TD
-    A["MCP client"] --> B["taiyaki-mcp (client UID)"]
-    B --> C["Unix socket: UID + HMAC challenge"]
-    C --> D["taiyaki-authority (separate UID)"]
-    D --> E["Plan validation and revision check"]
-    E --> F[("Private SQLite")]
+```text
+AI model / MCP host
+    |
+    | plan_* / work_next / work_report / test_define
+    v
+MCP adapter (client UID)
+    |
+    | Unix socket, peer UID + HMAC
+    v
+Authority (separate UID)
+    |
+    +--> versioned plan + WorkItem state (SQLite)
+    |        |
+    |        +--> dependency-aware scheduling and lease ownership
+    |
+    +--> verifier-only work verification operations
+             ^
+             | verifier UID + separate HMAC
+        Verifier process
+             |
+             +--> approved Test Gate catalog + pinned test source
+             +--> real test command, bounded timeout
+             +--> source tree freshness checks and PASS receipts
 ```
 
-[Planning model](../reference/PLANNING.md): versioned plans, work items,
-dependencies, review submission, and optimistic revision checks.
+The [planning model](../reference/PLANNING.md) defines work-item structure,
+metadata, dependencies and review submission.
 
-[MCP and authority reference](../reference/MCP.md): four typed MCP tools,
-local Unix-socket transport, Linux peer-credential check, per-connection
-HMAC-SHA256 challenge-response, and transactional SQLite persistence.
+The [MCP and verifier reference](../reference/MCP.md) documents the eight
+MCP operations, full nine-field Test Gate schema, source hashes,
+phase transitions, independent verifier provisioning and SQLite storage.
 
-The MCP adapter does not open SQLite; it forwards supported declarative
-operations to the authority. SQLite data is stored in an authority-owned
-private directory. An authenticated caller cannot choose arbitrary tools,
-SQL commands, or filesystem paths through the MCP interface.
+### Assignment and execution state
+
+The Authority selects an eligible leaf WorkItem only when dependencies are
+DONE, readiness and scheduling allow execution, and required gate
+definitions exist. The assignment includes a lease; a model can submit an
+implementation report with that lease but cannot mark its work DONE.
+The separate verifier checks preapproved Test Gate definitions and executes
+real tests before an authoritative PASS receipt can be stored.
+
+When a test fails, work returns to READY with feedback. When the verifier
+detects a changed checkout, it invalidates stale DONE states and downstream
+dependency assignments, requiring fresh verification. Parent milestones
+aggregate verified children and may also require their own tests.
 
 ## Security boundaries
 
-The authority and adapter **must** run under different Unix UIDs. The
-authority authenticates the connecting process's UID and verifies a fresh
-cryptographic challenge on every connection. The client identity is still
-the Unix UID, not a uniquely attested executable: processes sharing that
-UID can potentially access its key. A separate OS identity is necessary
-for isolating unrelated MCP processes.
+Linux Unix UIDs for the client, authority and verifier must be different.
+Each connection to the authority requires both the expected kernel peer
+identity and a fresh HMAC-SHA256 challenge response. The verifier's identity
+and key permit verification operations; the MCP client's identity and key
+do not. The database belongs only to the authority's Unix identity.
 
-A plan marked `submitted` is ready for review, **not approved**.
-Planning timestamps and owner labels are declarative, not authenticated
-audit provenance. Gate IDs are references, not executable verification or
-PASS receipts.
+Test definitions can originate from any agent, but actual execution requires
+an operator-reviewed catalog pinning both the **complete gate definition**
+and the test source file. The verifier runs only fixed catalog commands;
+it does not execute arbitrary MCP-supplied commands or source.
 
-**Not implemented:** execution-phase enforcement (I1), source-bound
-verification receipts (I2/I3), an isolated verification worker, durable
-mandatory audit history (I4), multi-plan authority tenancy, or remote MCP
-transport.
+**Current limitations:** The verifier executes catalog-approved tests under
+its own UID, without a separate untrusted-code sandbox; it must only run
+operator-vetted tests. Test semantic relevance is not automatically provable
+and requires human review. Reverification of modified source occurs when
+the verifier polls, rather than instantly. The coding model itself still
+requires an external MCP host/orchestrator. A complete tamper-evident
+audit ledger, multi-plan support and fully automated reviewed snapshot
+promotion are not yet implemented.
 
-## Verification scope
+## Verification
 
-The Rust tests exercise the planning model, SQLite transactions, and a real
-stdio MCP-to-authority exchange. A Linux integration fixture starts an
-authority under a distinct Unix UID and checks peer denial, invalid and
-replayed HMAC proof, private database access, and plan persistence.
-
-`bash scripts/check-site.sh` independently checks the website.
+Rust unit tests, cross-UID integration tests with real MCP and independent
+test processes, formatting, Clippy and static-site checks run in CI.
+The cross-UID suite is mandatory on Linux CI and fails if it cannot run.

@@ -26,6 +26,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let secret = taiyaki::authority::load_secret(&key)?;
     let db = taiyaki::db::Database::open(&database)?;
-    taiyaki::authority::run(socket, db, client_uid, secret).await?;
+    let verifier = match (
+        env::var("TAIYAKI_VERIFIER_UID"),
+        env::var_os("TAIYAKI_VERIFIER_SECRET_FILE"),
+    ) {
+        (Err(_), None) => None,
+        (Ok(uid), Some(path)) => Some((
+            uid.parse::<u32>()?,
+            taiyaki::authority::load_secret(&PathBuf::from(path))?,
+        )),
+        _ => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "verifier UID and key must be configured together",
+            )
+            .into())
+        }
+    };
+    taiyaki::authority::run_with_verifier(socket, db, client_uid, secret, verifier).await?;
     Ok(())
 }

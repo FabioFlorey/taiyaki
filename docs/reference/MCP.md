@@ -1,166 +1,288 @@
-# Local MCP adapter and SQLite authority
+# Taiyaki: MCP, WorkItems and independent Test Gates
 
-Taiyaki's implemented MCP interface is a **local stdio adapter** to a
-separate **Unix-socket authority**. The authority alone opens a SQLite
-database. Protocol handling uses the official [RMCP Rust SDK](https://github.com/modelcontextprotocol/rust-sdk).
+Taiyaki provides a local MCP adapter, a **separately authenticated SQLite
+authority**, and an optional independent Test Gate verifier. The adapter and
+authority are Rust binaries; the verifier is another Rust binary running under
+its own Linux identity.
 
-The integration is Linux/Unix-only and is not a remotely exposed MCP server.
-
-## Processes and trust boundary
+## Execution architecture
 
 ```text
-MCP client (approved client UID)
-    |
-    | stdio
-    v
-taiyaki-mcp (approved client UID)
-    |
-    | Unix socket; SO_PEERCRED UID check + fresh HMAC-SHA256 challenge
-    v
-taiyaki-authority (dedicated, different Unix UID)
-    |
-    | SQLite transaction: reload, validate, revise, commit
-    v
-Private plans.sqlite (authority UID, private 0700 directory)
+Model / MCP client (client Unix UID)
+  |
+  | stdio: 8 typed MCP tools
+  v
+taiyaki-mcp
+  |
+  | Unix socket, SO_PEERCRED + fresh HMAC-SHA256 challenge
+  v
+taiyaki-authority (different authority Unix UID)
+  |                                  ^
+  | SQLite transactions             | independent verifier UID
+  v                                  | + separate HMAC key
+plans.sqlite                         |
+                           taiyaki-verifier
+                              |
+                              | operator-owned catalog:
+                              | fixed program, args, test source SHA256,
+                              | complete Test Gate definition SHA256
+                              v
+                       Real OS test process
+                       (same UID as verifier; see limits)
 ```
 
-The **authority** must run under a dedicated Unix account, distinct from the
-**adapter** account. It refuses startup when those UIDs are identical.
-The socket owner must be the authority; connecting peers are checked against
-one configured client UID. A second, independent check requires proof of
-possession of a 32-byte shared secret for each connection.
+There is no remote MCP endpoint. The authority controls plan mutations, work
+assignments, phases, gate status and receipts; an MCP agent cannot directly
+write SQLite, submit trusted PASS results or set DONE.
 
-The authority sends a new unpredictable challenge for each connection. The
-client responds with an HMAC-SHA256, using domain separation. The shared
-secret is never transmitted across the socket. An expired/reused response
-does not authenticate another connection.
-
-The socket is mode `0666` so a potential client can reach it for
-authentication. The **socket directory** must be owned by the authority
-and not writable by other users, and the authority requires a matching
-kernel peer UID **and** a valid challenge response before reading an
-operation. Socket filesystem permissions alone do not grant access.
-
-## Build and configure
+## Build and provision
 
 ```sh
 cargo build --locked --bins
 ```
 
-Provision **two separate Unix accounts** and private credentials before
-starting the binaries. For example, use the names `taiyaki-auth` (authority)
-and `taiyaki-client` (MCP adapter), created by the machine administrator.
-These accounts are examples; the implementation does **not** install users,
-create directories, or generate secrets automatically.
+Provision three **distinct** Linux identities for the MCP client, the
+authority and the verifier, as well as:
 
-Provision these paths as an administrator:
+- An authority-owned **0700** directory containing `plans.sqlite` (**0600**).
+- A socket directory owned by the authority and not writable by other users.
+  The socket itself is **0666** for connection attempts; the authority always
+  requires an allowed peer UID and valid HMAC before processing any operation.
+- Authority and client private key files containing the same random **32-byte
+  secret**, encoded as 64 hex characters, with **0600** permissions.
+- A **second, different secret** stored in authority- and verifier-owned
+  **0600** files.
+- A verifier-owned private **0700** directory containing its **0600** test
+  catalog, and a verifier-owned source checkout where the test source files
+  cannot be changed by other Unix users.
 
-| Resource | Requirement |
-| --- | --- |
-| Authority database directory | Absolute, owned by authority UID, mode `0700` |
-| Authority database path | Absolute filename inside database directory; SQLite file mode `0600` |
-| Socket directory | Absolute, owned by authority UID, not group/world writable; client must be able to traverse it |
-| Authority secret file | Owned by authority UID, regular file mode `0600`, 64 hex characters encoding 32 random bytes |
-| Client secret file | Owned by approved client UID, regular file mode `0600`, **identical** secret bytes |
-| Client UID | Numeric UID of the account permitted to connect; different from the authority UID |
-
-Generate a random shared key securely (for example with `openssl rand -hex
-32`) and place copies in the two accounts' private key files using your
-administrator's normal provisioning mechanism. Do not commit either copy or
-pass the key through MCP tool arguments.
-
-Launch the **authority** under its own account, with these environment
-variables set to absolute paths:
+Key generation (run only when securely provisioning keys):
 
 ```sh
-TAIYAKI_DB_FILE=/private/authority/data/plans.sqlite
-TAIYAKI_SOCKET_PATH=/authority/owned/socket/authority.sock
-TAIYAKI_SECRET_FILE=/private/authority/data/authority.key
+openssl rand -hex 32
+```
+
+Do not place keys in Git, MCP arguments, or an agent-readable workspace.
+The binaries do not create Unix accounts or long-running services.
+
+Configure and start `taiyaki-authority` **under the authority identity**:
+
+```sh
+TAIYAKI_SOCKET_PATH=/authority/socket/taiyaki.sock
+TAIYAKI_DB_FILE=/authority/private/plans.sqlite
+TAIYAKI_SECRET_FILE=/authority/private/client.key
 TAIYAKI_CLIENT_UID=1234
+TAIYAKI_VERIFIER_UID=2345
+TAIYAKI_VERIFIER_SECRET_FILE=/authority/private/verifier.key
 /path/to/taiyaki-authority
 ```
 
-Replace `1234` with the numeric UID of the permitted MCP adapter account.
-A pre-existing socket path is rejected rather than silently deleted;
-remove stale sockets only after confirming no authority process is running.
+Replace both numeric UIDs and all absolute paths. The authority refuses
+an identity collision and refuses an existing socket path instead of
+silently deleting it. The verifier configuration is optional for planning
+but **required to produce trusted PASS receipts or DONE**.
 
-Launch **`taiyaki-mcp` as the permitted client UID** with:
+Start `taiyaki-mcp` under the permitted client identity. Your MCP host
+should launch it as a stdio subprocess:
 
 ```sh
-TAIYAKI_SOCKET_PATH=/authority/owned/socket/authority.sock
-TAIYAKI_SECRET_FILE=/private/client/credentials/taiyaki.key
+TAIYAKI_SOCKET_PATH=/authority/socket/taiyaki.sock
+TAIYAKI_SECRET_FILE=/client/private/client.key
 /path/to/taiyaki-mcp
 ```
 
-Configure your MCP client to launch `taiyaki-mcp` using its regular
-stdio subprocess configuration. Do not supply database paths or authority
-secrets to the MCP server as tool arguments.
+Start `taiyaki-verifier` under the configured **verifier identity**:
 
-## MCP tool surface
+```sh
+TAIYAKI_SOCKET_PATH=/authority/socket/taiyaki.sock
+TAIYAKI_SECRET_FILE=/verifier/private/verifier.key
+TAIYAKI_TEST_CATALOG=/verifier/private/catalog.json
+/path/to/taiyaki-verifier
+```
 
-| Tool | Input | Behavior |
+It polls for WorkItems in `verifying` every two seconds. Use
+`taiyaki-verifier --once` to run one verification sweep instead.
+
+## MCP tools
+
+| Tool | Input | Responsibility |
 | --- | --- | --- |
-| `plan_get` | None | Read the current plan and revision. |
-| `plan_create` | `title`, optional `description` | Create the one configured draft plan, once. |
-| `plan_edit` | `expected_revision`, `edit` | Atomically add, replace or remove an item, or update plan details/metadata. |
-| `plan_review` | `expected_revision`, `action` | `submit` or `return_to_draft`; not approval. |
+| `plan_get` | None | Read the plan and plan revision. |
+| `plan_create` | `title`, optional `description` | Create the single draft plan. |
+| `plan_edit` | `expected_revision`, `edit` | Edit a draft plan and WorkItem definitions. |
+| `plan_review` | `expected_revision`, `action` | `submit` / `return_to_draft`. Submission is not authenticated approval. |
+| `work_status` | None | Read workflow revision, phases, Test Gates and receipts. Never reveals assignment lease tokens. |
+| `test_define` | `expected_revision`, `gate` | Define a referenced Test Gate **without selecting its status**. |
+| `work_next` | `expected_revision`, `agent` | Atomically claim the next eligible leaf task and return its WorkItem and lease. |
+| `work_report` | `expected_revision`, `item_id`, `lease`, `notes` | Submit an implementation report and enter `verifying`; cannot mark DONE. |
 
-`plan_edit.edit` requires an `action`: `add_item`, `replace_item`,
-`remove_item`, `set_details`, or `set_metadata`.
-Item fields include `title`, `description`, `parent_id`, `depends_on`,
-`acceptance_criteria`, `required_gate_ids`, `priority`, `kind`,
-`disposition`, `blocker`, `not_before`, `due_at`,
-`estimate_minutes`, `owner`, `labels`, and `annotations`.
-An item replacement is a complete replacement, not a patch.
+`work_next` selects work after dependencies are DONE, subject to
+`not_before`, readiness, defined gate IDs and critical/high/normal/low
+priority. The `agent` label is descriptive; identity at the transport
+boundary is the authorized Unix UID. An assignment lease is required to
+report implementation; it is returned only in the assignment response.
 
-Example arguments for `plan_edit`:
+`plan_edit.edit` supports `add_item`, `replace_item`, `remove_item`,
+`set_details` and `set_metadata`. Replacements are complete WorkItems,
+not patches. Plan revisions and workflow revisions are **separate**:
+`plan_edit` uses the former; `work_next`, `work_report`, and
+`test_define` use the latter.
+
+Example assignment request:
+
+```json
+{"expected_revision": 3, "agent": "coding-agent"}
+```
+
+Example implementation report (UUID values come from the assignment):
+
+```json
+{
+  "expected_revision": 4,
+  "item_id": "00000000-0000-4000-8000-000000000001",
+  "lease": "00000000-0000-4000-8000-000000000002",
+  "notes": "Implementation submitted for independent verification"
+}
+```
+
+The plan must first be `submitted`; the workflow initializes when the plan
+is submitted. Editing or returning the plan to draft **invalidates the
+workflow and its receipts**. To modify definitions, reopen the draft and
+resubmit. Parent WorkItems aggregate completed children; a parent with its
+own Test Gate must also be independently verified.
+
+## Test Gate: nine fields
+
+| Field | Meaning |
+| --- | --- |
+| **Test Type** | Fixed enum: `functional`, `integration`, `regression`, `security`, `performance`, `quality_of_life`, `accessibility`, `reliability`. |
+| **Test ID** | Unique identifier referenced by the WorkItem. |
+| **Test Name** | Human-readable title. |
+| **Test Description** | What is tested. |
+| **Test Goal** | Behavior that must hold. |
+| **Precondition** | Conditions for meaningful execution. |
+| **Expected Result** | Concrete expected outcome. |
+| **Test Code** | Relative path to the versioned test source in the approved checkout. |
+| **Test Status** | Authority-managed `not_run`, `running`, `pass`, `fail`, `error`, or `skipped` (default `not_run`). |
+
+A Test Gate may be authored by any agent or developer. That **does not**
+make it a trusted test. A verifier operator must independently review the
+full gate specification and source code and then pin both in the catalog.
+No MCP tool can change `test_status` to `pass`, execute arbitrary test
+source, or approve a gate.
+
+Example `test_define` arguments:
 
 ```json
 {
   "expected_revision": 1,
-  "edit": {
-    "action": "add_item",
-    "item": {
-      "title": "Test the plan boundary",
-      "priority": "high",
-      "disposition": "ready",
-      "acceptance_criteria": ["Stale edits are rejected"],
-      "required_gate_ids": ["cargo-test"]
-    }
+  "gate": {
+    "test_type": "functional",
+    "test_id": "test-phase-denial",
+    "test_name": "Reject editing in verification phase",
+    "test_description": "A cached editing capability remains denied in verifying.",
+    "test_goal": "Prevent phase bypass.",
+    "precondition": "A work item has entered verifying.",
+    "expected_result": "The tool call returns forbidden and does not mutate state.",
+    "test_code": "tests/phase_denial.py"
   }
 }
 ```
 
-All mutations reload the current SQLite record **inside an immediate
-transaction**, compare the expected revision, validate the resulting plan,
-and commit only valid changes. A rejected operation does not change the plan.
-Successful tool calls return a structured plan; rejected calls return a
-structured error code and message.
+## Approved verifier catalog
 
-SQLite currently stores **one plan's latest serialized state**. It does not
-yet store a full plan-revision history, verified receipts, or a mandatory
-transition audit. Previous JSON-file stores are **not automatically migrated**
-into SQLite.
+A catalog is a JSON object with `source_root` and `cases`. Each case
+pins `test_id`, `test_code`, `test_code_sha256`,
+`test_definition_sha256`, `executable` (absolute), `args` (fixed),
+`success_marker` and optional `timeout_seconds` (1–120, default 30).
 
-## Security boundaries and limitations
+Example **template** (replace the placeholder hashes with actual reviewed
+SHA256 digests before deployment):
 
-- The MCP adapter cannot read or write the SQLite database directly.
-  The database directory must be unreadable to the client OS identity.
-- A caller cannot choose filesystem paths, execute shell commands or invoke
-  a hidden `approve`, `verify`, or `done` tool through these four tools.
-- The authority independently checks the kernel peer UID and a fresh
-  HMAC response **on every socket connection**.
-- **An unrelated MCP sharing the same permitted Unix UID can potentially
-  read that UID's secret and impersonate the adapter.** To isolate different
-  MCPs, use separate Unix identities and restrict which identity is allowed.
-- Administrator/root access and processes running as the authority UID can
-  access the database. Neither SQLite nor the secret protects against that.
-- This implements only plan validation and review locking. It does **not**
-  implement per-phase execution authorization (I1), verified PASS receipts
-  (I2/I3), an independent verification worker, or durable mandatory audit
-  provenance (I4).
+```json
+{
+  "source_root": "/verifier/approved-checkout",
+  "cases": [{
+    "test_id": "test-phase-denial",
+    "test_code": "tests/phase_denial.py",
+    "test_code_sha256": "<64 hex characters>",
+    "test_definition_sha256": "<64 hex characters>",
+    "executable": "/usr/bin/python3",
+    "args": ["tests/phase_denial.py"],
+    "success_marker": "PHASE_DENIAL_TEST_PASSED",
+    "timeout_seconds": 20
+  }]
+}
+```
 
-## Tests
+`test_code_sha256` is SHA256 of the reviewed test file. The definition
+digest is SHA256 of canonical compact JSON (UTF-8, sorted keys) for the **full
+Test Gate definition with `test_status: "not_run"`**. Compute it from the
+gate reviewed and returned by `work_status`, not from unaudited input.
+The catalog file must be an owner-private regular file inside a
+verifier-owned **0700** directory; the checkout root and test source must
+be owned by the verifier and not group/world writable. Only an operator
+can curate the catalog; it is never generated from agent claims.
+
+Before each execution the verifier checks that Git reports a clean checkout.
+It confirms both approved hashes, runs the catalog executable with its
+fixed arguments (without a shell), enforces a timeout and requires both
+exit status zero **and** the expected output marker. A no-test execution
+without the marker does not yield PASS. It checks the source file and tree
+again afterward.
+
+**Test validity = operator-reviewed definition and pinned source match.**
+Matching an approved file and marker does not mathematically prove that the
+test exercises its stated goal; that semantic judgment remains part of
+the review. Tests can be written by other agents, but an operator must vet
+their source and semantics before the verifier runs them.
+
+## Phases and evidence
+
+```text
+Submitted planning definition
+  -> READY -> IMPLEMENTING (lease)
+  -> VERIFYING (agent implementation report)
+  -> DONE     (only if all approved Test Gates are executed and PASS)
+        |
+        +-> READY with failure feedback when any test fails
+```
+
+The independent verifier has a **different Unix UID and its own HMAC key**.
+The authority rejects any attempt by the MCP identity to invoke the
+internal verifier operations. A successful verification commits Test
+Statuses, receipt hashes, the plan revision and work phase in one SQLite
+transaction.
+
+Receipts include work item, gate, plan revision, source tree fingerprint,
+test file SHA256, observed timestamp, and verified outcome. When the
+verifier detects a changed or dirty source tree, it invalidates old
+DONE phases and downstream dependency assignments; a fresh verification
+is required. This check occurs during verifier polling, not instantly
+when arbitrary files change.
+
+## Security and current limits
+
+- This is a **local** workflow. Taiyaki exposes WorkItems over MCP but
+  does not itself host or invoke a general-purpose language model.
+  An MCP-capable agent/orchestrator calls `work_next`, edits source, and
+  submits `work_report`.
+- The test process runs as the verifier Unix UID, **not in a separate
+  container or sandbox**. Operator-vetted tests are required. A malicious
+  catalog-approved executable can access files available to that UID,
+  including its secret. For untrusted generated test code, another
+  restricted execution identity/sandbox remains necessary.
+- The verifier must run and poll to maintain freshness. Stopping it
+  suspends actual verification and delayed invalidation of old receipts.
+- The source checkout used to verify is a verifier-owned reviewed
+  snapshot. Taiyaki does not yet automatically import agent edits
+  into that snapshot or approve test changes.
+- Only one plan is stored. SQLite includes schema migrations from v1 to
+  v2; JSON-file plans are not automatically imported.
+- The workflow stores receipts, but not yet a complete tamper-evident
+  audit ledger. Some intended security invariants remain unimplemented.
+
+## Real checks
 
 ```sh
 cargo fmt --all -- --check
@@ -168,10 +290,9 @@ cargo test --locked --all-targets
 cargo clippy --locked --all-targets -- -D warnings
 ```
 
-On Linux, the cross-UID test uses passwordless `sudo` to launch the
-authority under the disposable `nobody` identity (test-only), and verifies
-database access denial, wrong-key denial, peer-UID denial, replay resistance,
-real MCP calls, revision conflicts, and restart persistence. Without sudo,
-the local cross-UID test reports a skip. CI sets
-`TAIYAKI_REQUIRE_ISOLATION_TEST=1` to make lack of those privileges a test
-failure rather than silently skip.
+On Linux, the real integration test provisions **three separate Unix UIDs**
+for the MCP client, authority and verifier; executes an actual positive
+and negative test, observes fail/retry, rejects a forged MCP PASS request,
+checks dependency ordering, and invalidates stale receipts after a source
+change. CI requires this test; without passwordless `sudo`, the local
+cross-UID case explicitly reports a skip.

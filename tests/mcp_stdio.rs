@@ -56,6 +56,36 @@ fn authority_fails_closed_without_configuration() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("TAIYAKI_SOCKET_PATH"));
 }
+#[cfg(target_os = "linux")]
+#[test]
+fn real_three_uid_workitem_and_gate_verification() {
+    use std::process::Command;
+    let sudo = Command::new("sudo").arg("-n").arg("true").output();
+    if !sudo.is_ok_and(|value| value.status.success()) {
+        assert!(
+            std::env::var_os("TAIYAKI_REQUIRE_ISOLATION_TEST").is_none(),
+            "independent verifier test requires passwordless sudo"
+        );
+        eprintln!("SKIPPED independent verifier test: no passwordless sudo");
+        return;
+    }
+    let script = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/workflow_e2e.py");
+    let output = Command::new("python3")
+        .arg(script)
+        .arg(env!("CARGO_BIN_EXE_taiyaki-authority"))
+        .arg(env!("CARGO_BIN_EXE_taiyaki-mcp"))
+        .arg(env!("CARGO_BIN_EXE_taiyaki-verifier"))
+        .output()
+        .expect("Python3 available for cross-UID verifier test");
+    assert!(
+        output.status.success(),
+        "real workflow failed\nstdout:{}\nstderr:{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    println!("{}", String::from_utf8_lossy(&output.stdout));
+}
+
 #[test]
 fn authority_refuses_same_uid_even_when_configured() {
     use std::process::Command;

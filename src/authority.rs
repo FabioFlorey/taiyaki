@@ -5,6 +5,7 @@ use crate::{
     api::{make_edit, EditInput, NewPlan, ReviewAction, ReviewInput},
     db::{Database, DbError},
     planning::{Plan, PlanChange, PlanError},
+    workflow::{GateObservation, TestGate},
 };
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
@@ -32,14 +33,47 @@ const DOMAIN: &[u8] = b"taiyaki-authority-v1";
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
     Get,
-    Create { args: NewPlan },
-    Edit { args: Box<EditInput> },
-    Review { args: ReviewInput },
+    Create {
+        args: NewPlan,
+    },
+    Edit {
+        args: Box<EditInput>,
+    },
+    Review {
+        args: ReviewInput,
+    },
+    WorkStatus,
+    WorkNext {
+        expected_revision: u64,
+        agent: String,
+    },
+    WorkReport {
+        expected_revision: u64,
+        item_id: uuid::Uuid,
+        lease: uuid::Uuid,
+        notes: String,
+    },
+    TestDefine {
+        expected_revision: u64,
+        gate: TestGate,
+    },
+    VerifyFetch,
+    VerifyRefresh {
+        expected_revision: u64,
+        source_tree_sha256: Option<String>,
+    },
+    VerifyCommit {
+        expected_revision: u64,
+        item_id: uuid::Uuid,
+        source_tree_sha256: String,
+        results: Vec<GateObservation>,
+    },
 }
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Response {
     Ok { plan: Plan },
+    Data { data: serde_json::Value },
     Error { code: String, message: String },
 }
 #[derive(Serialize, Deserialize)]
@@ -70,28 +104,149 @@ fn db_error(error: DbError) -> Response {
         DbError::Plan(_) => "invalid_plan",
         DbError::Sql(_) => "storage_error",
         DbError::Invalid(_) => "unsafe_storage",
+        DbError::Workflow(_) => "workflow_rejected",
     };
     err(code, error.to_string())
 }
 
-fn execute(db: &Database, request: Request) -> Response {
-    let answer = match request {
-        Request::Get => db.get(),
-        Request::Create { args } => db.create(args.title, args.description),
+fn execute(db: &Database, request: Request, verifier_role: bool) -> Response {
+    use serde_json::json;
+    if verifier_role {
+        match request {
+            Request::VerifyFetch => {
+                return match (db.get(), db.workflow()) {
+                    (Ok(plan), Ok(mut flow)) => {
+                        for work in flow.work.values_mut() {
+                            work.lease = None;
+                        }
+                        Response::Data {
+                            data: json!({"plan":plan,"workflow":flow}),
+                        }
+                    }
+                    (Err(e), _) | (_, Err(e)) => db_error(e),
+                }
+            }
+            Request::VerifyRefresh {
+                expected_revision,
+                source_tree_sha256,
+            } => {
+                return match db.refresh_verifier_source(expected_revision, source_tree_sha256) {
+                    Ok(mut flow) => {
+                        for rec in flow.work.values_mut() {
+                            rec.lease = None;
+                        }
+                        Response::Data { data: json!(flow) }
+                    }
+                    Err(e) => db_error(e),
+                }
+            }
+            Request::VerifyCommit {
+                expected_revision,
+                item_id,
+                source_tree_sha256,
+                results,
+            } => {
+                return match db.commit_verification(
+                    expected_revision,
+                    item_id,
+                    source_tree_sha256,
+                    results,
+                ) {
+                    Ok(mut flow) => {
+                        for work in flow.work.values_mut() {
+                            work.lease = None;
+                        }
+                        Response::Data { data: json!(flow) }
+                    }
+                    Err(e) => db_error(e),
+                }
+            }
+            _ => {
+                return err(
+                    "forbidden",
+                    "verifier identity can only report verification",
+                )
+            }
+        }
+    }
+    match request {
+        Request::VerifyFetch | Request::VerifyRefresh { .. } | Request::VerifyCommit { .. } => err(
+            "forbidden",
+            "only verifier identity can submit test evidence",
+        ),
+        Request::Get => match db.get() {
+            Ok(plan) => Response::Ok { plan },
+            Err(e) => db_error(e),
+        },
+        Request::Create { args } => match db.create(args.title, args.description) {
+            Ok(plan) => Response::Ok { plan },
+            Err(e) => db_error(e),
+        },
         Request::Edit { args } => {
-            db.apply(args.expected_revision, |plan| make_edit(plan, args.edit))
+            match db.apply(args.expected_revision, |plan| make_edit(plan, args.edit)) {
+                Ok(plan) => Response::Ok { plan },
+                Err(e) => db_error(e),
+            }
         }
         Request::Review { args } => {
             let change = match args.action {
                 ReviewAction::Submit => PlanChange::SubmitForReview,
                 ReviewAction::ReturnToDraft => PlanChange::ReturnToDraft,
             };
-            db.apply(args.expected_revision, |_| Ok(change))
+            match db.apply(args.expected_revision, |_| Ok(change)) {
+                Ok(plan) => Response::Ok { plan },
+                Err(e) => db_error(e),
+            }
         }
-    };
-    match answer {
-        Ok(plan) => Response::Ok { plan },
-        Err(error) => db_error(error),
+        Request::WorkStatus => match db.workflow() {
+            Ok(mut flow) => {
+                for record in flow.work.values_mut() {
+                    record.lease = None;
+                }
+                Response::Data { data: json!(flow) }
+            }
+            Err(e) => db_error(e),
+        },
+        Request::WorkNext {
+            expected_revision,
+            agent,
+        } => match db.claim_next(expected_revision, &agent) {
+            Ok((mut flow, assignment)) => {
+                for record in flow.work.values_mut() {
+                    record.lease = None;
+                }
+                Response::Data {
+                    data: json!({"workflow":flow,"assignment":assignment}),
+                }
+            }
+            Err(e) => db_error(e),
+        },
+        Request::WorkReport {
+            expected_revision,
+            item_id,
+            lease,
+            notes,
+        } => match db.submit_work(expected_revision, item_id, lease, notes) {
+            Ok(mut flow) => {
+                for record in flow.work.values_mut() {
+                    record.lease = None;
+                }
+                Response::Data { data: json!(flow) }
+            }
+            Err(e) => db_error(e),
+        },
+        Request::TestDefine {
+            expected_revision,
+            gate,
+        } => match db.define_gate(expected_revision, gate) {
+            Ok(mut flow) => {
+                for record in flow.work.values_mut() {
+                    record.lease = None;
+                }
+                Response::Data { data: json!(flow) }
+            }
+            Err(e) => db_error(e),
+        },
     }
 }
 
@@ -150,6 +305,7 @@ async fn serve_connection(
     mut socket: UnixStream,
     secret: [u8; 32],
     db: Database,
+    verifier_role: bool,
 ) -> io::Result<()> {
     let nonce: [u8; 32] = rand::random();
     send_frame(
@@ -193,7 +349,7 @@ async fn serve_connection(
             return Ok(());
         }
     };
-    let response = tokio::task::spawn_blocking(move || execute(&db, request))
+    let response = tokio::task::spawn_blocking(move || execute(&db, request, verifier_role))
         .await
         .map_err(io::Error::other)?;
     send_frame(&mut socket, &response).await
@@ -230,6 +386,25 @@ pub async fn run(
     allowed_uid: u32,
     secret: [u8; 32],
 ) -> io::Result<()> {
+    run_with_verifier(socket_path, db, allowed_uid, secret, None).await
+}
+
+pub async fn run_with_verifier(
+    socket_path: PathBuf,
+    db: Database,
+    allowed_uid: u32,
+    secret: [u8; 32],
+    independent_verifier: Option<(u32, [u8; 32])>,
+) -> io::Result<()> {
+    if independent_verifier
+        .as_ref()
+        .is_some_and(|(uid, _)| *uid == allowed_uid || *uid == unsafe { libc::geteuid() })
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "verifier, client and authority UIDs must be different",
+        ));
+    }
     if allowed_uid == unsafe { libc::geteuid() } {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
@@ -246,14 +421,24 @@ pub async fn run(
         let Ok(credentials) = conn.peer_cred() else {
             continue;
         };
-        if credentials.uid() != allowed_uid {
-            // Never issue a challenge to a UID outside the allowlist.
+        let identity = if credentials.uid() == allowed_uid {
+            Some((secret, false))
+        } else if independent_verifier
+            .as_ref()
+            .is_some_and(|(uid, _)| *uid == credentials.uid())
+        {
+            independent_verifier.map(|(_, key)| (key, true))
+        } else {
+            None
+        };
+        let Some((key, verifier_role)) = identity else {
             let _ = send_frame(&mut conn, &err("unauthorized", "peer identity denied")).await;
             continue;
-        }
+        };
         let db = db.clone();
         tokio::spawn(async move {
-            let _ = tokio::time::timeout(TIMEOUT, serve_connection(conn, secret, db)).await;
+            let _ =
+                tokio::time::timeout(TIMEOUT, serve_connection(conn, key, db, verifier_role)).await;
         });
     }
 }
@@ -276,7 +461,7 @@ impl Client {
             key: key_file(secret_file)?,
         })
     }
-    pub fn call(&self, request: Request) -> Result<Plan, (String, String)> {
+    pub fn request(&self, request: Request) -> Result<serde_json::Value, (String, String)> {
         let mut stream = StdUnixStream::connect(&self.socket)
             .map_err(|e| ("authority_unavailable".into(), e.to_string()))?;
         stream
@@ -324,9 +509,16 @@ impl Client {
             )
         })?;
         match result {
-            Response::Ok { plan } => Ok(plan),
+            Response::Ok { plan } => {
+                serde_json::to_value(plan).map_err(|e| ("protocol".into(), e.to_string()))
+            }
+            Response::Data { data } => Ok(data),
             Response::Error { code, message } => Err((code, message)),
         }
+    }
+    pub fn call(&self, request: Request) -> Result<Plan, (String, String)> {
+        let value = self.request(request)?;
+        serde_json::from_value(value).map_err(|e| ("protocol".into(), e.to_string()))
     }
 }
 pub fn load_secret(path: &Path) -> io::Result<[u8; 32]> {
