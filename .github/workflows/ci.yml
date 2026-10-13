@@ -24,7 +24,21 @@ jobs:
       - name: Test
         env:
           TAIYAKI_REQUIRE_ISOLATION_TEST: "1"
-        run: cargo test --locked --all-targets
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! cargo test --locked --all-targets > /tmp/taiyaki-ci-tests.log 2>&1; then
+            cat /tmp/taiyaki-ci-tests.log
+            python3 - <<'PYTHON'
+          from pathlib import Path
+          lines = Path("/tmp/taiyaki-ci-tests.log").read_text(errors="replace").splitlines()
+          tail = "\n".join(lines[-65:])[-5000:]
+          tail = tail.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          print(f"::error title=Taiyaki Rust test failure::{tail}")
+          PYTHON
+            exit 1
+          fi
+          cat /tmp/taiyaki-ci-tests.log
       - name: Lint
         run: cargo clippy --locked --all-targets -- -D warnings
 
